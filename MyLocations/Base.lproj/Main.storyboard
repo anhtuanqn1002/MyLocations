@@ -73,7 +73,7 @@
                                 <animations/>
                                 <state key="normal" title="Get My Location"/>
                                 <connections>
-                                    <action selector="getLocation:" destination="9pv-A4-QxB" eventType="touchUpInside" id="ywW-WA-KVP"/>
+                                    <action selector="getLocation:" destination="9pv-A4-QxB" eventType="touchUpInside" id="eZJ-dV-j56"/>
                                 </connections>
                             </button>
                         </subviews>
