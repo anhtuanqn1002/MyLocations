@@ -22,7 +22,15 @@
 - (void)viewDidLoad {
     [super viewDidLoad];
     // Do any additional setup after loading the view, typically from a nib.
+    
+//    _locationManager = [[CLLocationManager alloc] init];
+//    _locationManager.delegate = self;
+//    if ([_locationManager respondsToSelector:@selector(requestWhenInUseAuthorization)]) {
+//        [_locationManager requestWhenInUseAuthorization];
+//    }
+//    [self]
     [self updateLabels];
+    [self configureGetButton];
 }
 
 - (void)didReceiveMemoryWarning {
@@ -43,17 +51,39 @@
 //    _locationManager.desiredAccuracy = kCLLocationAccuracyNearestTenMeters;
 //
 //    [_locationManager startUpdatingLocation];
-    [self startLocationManager];
+    if (_updatingLocation) {
+        [self stopLocationManager];
+    } else {
+        _location = nil;
+        _lastLocationError = nil;
+        
+        [self startLocationManager];
+    }
+//    [self startLocationManager];
     [self updateLabels];
+    [self configureGetButton];
 }
 
 #pragma mark - CLLocationManagerDelegate
 -(void)startLocationManager {
     if ([CLLocationManager locationServicesEnabled]) {
         _locationManager.delegate = self;
+        
+        
+        
         _locationManager.desiredAccuracy = kCLLocationAccuracyNearestTenMeters;
+        _locationManager.distanceFilter = kCLDistanceFilterNone;
+        
+//      iOS 8+ phải có 2 method này chạy cùng với việc set 2 key trong file Info.plist là:
+//      NSLocationAlwaysUsageDescription -- String -- I need Location
+//      NSLocationWhenInUseUsageDescription -- String -- I need Location
+        [_locationManager requestWhenInUseAuthorization];
+        [_locationManager startMonitoringSignificantLocationChanges];
+
+        
         [_locationManager startUpdatingLocation];
         _updatingLocation = YES;
+        NSLog(@"%f",_locationManager.location.coordinate.latitude);
     }
 }
 - (void)stopLocationManager {
@@ -76,6 +106,7 @@
     _lastLocationError = error;
     
     [self updateLabels];
+    [self configureGetButton];
 }
 
 - (void)updateLabels {
@@ -109,13 +140,42 @@
     }
 }
 
+//set trạng thái button
+-(void)configureGetButton {
+    if (_updatingLocation) {
+        [self.getButton setTitle:@"Stop" forState:UIControlStateNormal];
+    } else {
+        [self.getButton setTitle:@"Get My Location" forState:UIControlStateNormal];
+    }
+}
 -(void)locationManager:(CLLocationManager *)manager didUpdateLocations:(nonnull NSArray<CLLocation *> *)locations {
+    
     CLLocation *newLocation = [locations lastObject];
     NSLog(@"didUpdateLocations %@", newLocation);
     
-    _lastLocationError = nil;
-    _location = newLocation;
-    [self updateLabels];
+    //nếu thời gian của location này lâu quá 5s thì tiến hành bỏ location này đi
+    if ([newLocation.timestamp timeIntervalSinceNow] < -5.0) {
+        return;
+    }
+    
+    if (newLocation.horizontalAccuracy < 0) {
+        return;
+    }
+    
+    if (_location == nil || _location.horizontalAccuracy > newLocation.horizontalAccuracy) {
+        _lastLocationError = nil;
+        _location = newLocation;
+        [self updateLabels];
+        
+        if (newLocation.horizontalAccuracy <= _locationManager.desiredAccuracy) {
+            NSLog(@"*** We're done!");
+            [self stopLocationManager];
+            [self configureGetButton];
+        }
+    }
+//    _lastLocationError = nil;
+//    _location = newLocation;
+//    [self updateLabels];
 }
 
 @end
