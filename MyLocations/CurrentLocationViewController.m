@@ -18,17 +18,21 @@
     CLLocation *_location;
     BOOL _updatingLocation;
     NSError *_lastLocationError;
+    
+    //chuyển toạ độ coordinates thành địa chỉ thực
+    //_geocoder là đối tượng chuyển mã địa lí
+    CLGeocoder *_geocoder;
+    //_placemark là đối tượng chứa kết quả (là 1 địa chỉ)
+    CLPlacemark *_placemark;
+    //_performingReverseGeocoding = YES nếu thực hiện việc lấy địa chỉ
+    BOOL _performingReverseGeocoding;
+    //đối tượng _lastGeocodingError sẽ ghi nhận các lỗi nếu có
+    NSError *_lastGeocodingError;
 }
 - (void)viewDidLoad {
     [super viewDidLoad];
     // Do any additional setup after loading the view, typically from a nib.
-    
-//    _locationManager = [[CLLocationManager alloc] init];
-//    _locationManager.delegate = self;
-//    if ([_locationManager respondsToSelector:@selector(requestWhenInUseAuthorization)]) {
-//        [_locationManager requestWhenInUseAuthorization];
-//    }
-//    [self]
+
     [self updateLabels];
     [self configureGetButton];
 }
@@ -41,6 +45,7 @@
 -(id)initWithCoder:(NSCoder *)aDecoder {
     if ((self = [super initWithCoder:aDecoder])) {
         _locationManager = [[CLLocationManager alloc] init];
+        _geocoder = [[CLGeocoder alloc] init];
     }
     return self;
 }
@@ -57,6 +62,10 @@
         _location = nil;
         _lastLocationError = nil;
         
+//  clean slate
+        _placemark = nil;
+        _lastGeocodingError = nil;
+        
         [self startLocationManager];
     }
 //    [self startLocationManager];
@@ -65,6 +74,15 @@
 }
 
 #pragma mark - CLLocationManagerDelegate
+-(void)didTimeOut:(id)obj {
+    NSLog(@"*** Time out");
+    if (_location == nil) {
+        [self stopLocationManager];
+        _lastLocationError = [NSError errorWithDomain:@"MyLocationsErrorDomain" code:1 userInfo:nil];
+        [self updateLabels];
+        [self configureGetButton];
+    }
+}
 -(void)startLocationManager {
     if ([CLLocationManager locationServicesEnabled]) {
         _locationManager.delegate = self;
@@ -83,11 +101,14 @@
         
         [_locationManager startUpdatingLocation];
         _updatingLocation = YES;
-        NSLog(@"%f",_locationManager.location.coordinate.latitude);
+        
+        //sau 60s mà không tìm ra địa điểm thì nó sẽ báo timeout và method didTimeOut: được gọi
+        [self performSelector:@selector(didTimeOut:) withObject:nil afterDelay:60];
     }
 }
 - (void)stopLocationManager {
     if (_updatingLocation) {
+        [NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(didTimeOut:) object:nil];
         [_locationManager stopUpdatingLocation];
         _locationManager.delegate = nil;
         _updatingLocation = NO;
@@ -109,12 +130,26 @@
     [self configureGetButton];
 }
 
+-(NSString *)stringFromPlacemark:(CLPlacemark *)thePlacemark {
+    return [NSString stringWithFormat:@"%@ %@\n%@ %@ %@", thePlacemark.subThoroughfare, thePlacemark.thoroughfare, thePlacemark.locality, thePlacemark.administrativeArea, thePlacemark.postalCode];
+}
 - (void)updateLabels {
     if (_location != nil) {
         self.latitudeLabel.text = [NSString stringWithFormat:@"%.8f", _location.coordinate.latitude];
         self.longitudeLabel.text = [NSString stringWithFormat:@"%.8f", _location.coordinate.longitude];
         self.tagButton.hidden = NO;
         self.messageLabel.text = @"";
+        
+        if (_placemark != nil) {
+            self.addressLabel.text = [self stringFromPlacemark:_placemark];
+        } else if (_performingReverseGeocoding) {
+            self.addressLabel.text = @"Searching for Address...";
+        } else if (_lastGeocodingError != nil) {
+            self.addressLabel.text = @"Error Finding Address";
+        } else {
+            self.addressLabel.text = @"No Address Found";
+        }
+        
     } else {
         self.latitudeLabel.text = @"";
         self.longitudeLabel.text = @"";
@@ -162,6 +197,12 @@
         return;
     }
     
+    //distance là tính khoảng cách giữa 2 điểm toạ độ địa lí
+    CLLocationDistance distance = MAXFLOAT;
+    if (_location != nil) {
+        distance = [newLocation distanceFromLocation:_location];
+    }
+    
     if (_location == nil || _location.horizontalAccuracy > newLocation.horizontalAccuracy) {
         _lastLocationError = nil;
         _location = newLocation;
@@ -171,11 +212,40 @@
             NSLog(@"*** We're done!");
             [self stopLocationManager];
             [self configureGetButton];
+            
+            //nếu như khoảng cách 2 điểm mà là 0 thì ta không cần phải chuyển điểm mới thành địa chỉ nữa, vì nó đã được chuyển từ điểm địa lí trước đó
+            if (distance > 0) {
+                _performingReverseGeocoding = NO;
+            }
+        }
+        
+        if (!_performingReverseGeocoding) {
+            NSLog(@"*** Going to geocode");
+            _performingReverseGeocoding = YES;
+            [_geocoder reverseGeocodeLocation:_location completionHandler:^(NSArray *placemarks, NSError *error) {
+                NSLog(@"*** Found placemarks: %@, error: %@", placemarks, error);
+                _lastGeocodingError = error;
+                if (error == nil && [placemarks count]>0) {
+                    _placemark = [placemarks lastObject];
+                } else {
+                    _placemark = nil;
+                }
+                
+                _performingReverseGeocoding = NO;
+                [self updateLabels];
+            }];
         }
     }
-//    _lastLocationError = nil;
-//    _location = newLocation;
-//    [self updateLabels];
+    //nếu khoảng cách là nhỏ thì ta cho 1 khoảng thời gian khoảng 10s để cập nhật địa điểm mới, quá thời điểm 10s thì cập nhật trạng thái hiện tại này.
+    else if (distance < 1.0) {
+        NSTimeInterval timeInterval = [newLocation.timestamp timeIntervalSinceDate:_location.timestamp];
+        if (timeInterval > 10) {
+            NSLog(@"*** Force done!");
+            [self stopLocationManager];
+            [self updateLabels];
+            [self configureGetButton];
+        }
+    }
 }
 
 @end
